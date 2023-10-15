@@ -10,6 +10,7 @@ from .agent import AgentConfig
 from .synthesizer import SynthesizerConfig
 from .events import Sender
 from .transcript import TranscriptEvent
+from .message import BaseMessage
 
 
 class WebSocketMessageType(str, Enum):
@@ -61,6 +62,8 @@ class AudioConfigStartMessage(
     output_audio_config: OutputAudioConfig
     conversation_id: Optional[str] = None
     subscribe_transcript: Optional[bool] = None
+    initial_message: Optional[BaseMessage] = None
+    prompt_preamble: str
 
 
 class ReadyMessage(WebSocketMessage, type=WebSocketMessageType.READY):

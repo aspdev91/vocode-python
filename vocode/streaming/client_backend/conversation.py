@@ -11,6 +11,8 @@ from vocode.streaming.models.transcriber import (
     DeepgramTranscriberConfig,
     PunctuationEndpointingConfig,
 )
+from vocode.streaming.models.agent import ChatGPTAgentConfig
+from vocode.streaming.agent.chat_gpt_agent import ChatGPTAgent
 from vocode.streaming.models.websocket import (
     AudioConfigStartMessage,
     AudioMessage,
@@ -31,18 +33,26 @@ from vocode.streaming.models.events import Event, EventType
 from vocode.streaming.models.transcript import TranscriptEvent
 from vocode.streaming.utils import events_manager
 
+from vocode.streaming.models.message import BaseMessage
+
 BASE_CONVERSATION_ENDPOINT = "/conversation"
 
 
 class ConversationRouter(BaseRouter):
     def __init__(
         self,
-        agent_thunk: Callable[[], BaseAgent],
+        agent_thunk: Callable[
+            [], ChatGPTAgent
+        ] = lambda prompt_preamble, initial_message: ChatGPTAgent(
+            ChatGPTAgentConfig(
+                initial_message=initial_message, prompt_preamble=prompt_preamble
+            )
+        ),
         transcriber_thunk: Callable[
             [InputAudioConfig], BaseTranscriber
         ] = lambda input_audio_config: DeepgramTranscriber(
             DeepgramTranscriberConfig.from_input_audio_config(
-                input_audio_config=input_audio_config,
+                _audio_config=input_audio_config,
                 endpointing_config=PunctuationEndpointingConfig(),
             )
         ),
@@ -69,13 +79,20 @@ class ConversationRouter(BaseRouter):
         output_device: WebsocketOutputDevice,
         start_message: AudioConfigStartMessage,
     ) -> StreamingConversation:
+        print("start_message")
+        print(start_message)
+        print(type(start_message.prompt_preamble))
+        print(start_message.prompt_preamble)
+        print(type(start_message.initial_message))
         transcriber = self.transcriber_thunk(start_message.input_audio_config)
         synthesizer = self.synthesizer_thunk(start_message.output_audio_config)
         synthesizer.synthesizer_config.should_encode_as_wav = True
         return StreamingConversation(
             output_device=output_device,
             transcriber=transcriber,
-            agent=self.agent_thunk(),
+            agent=self.agent_thunk(
+                start_message.prompt_preamble, start_message.initial_message
+            ),
             synthesizer=synthesizer,
             conversation_id=start_message.conversation_id,
             events_manager=TranscriptEventManager(output_device, self.logger)
@@ -89,6 +106,8 @@ class ConversationRouter(BaseRouter):
         start_message: AudioConfigStartMessage = AudioConfigStartMessage.parse_obj(
             await websocket.receive_json()
         )
+        print("start message", start_message)
+
         self.logger.debug(f"Conversation started")
         output_device = WebsocketOutputDevice(
             websocket,
@@ -122,7 +141,7 @@ class TranscriptEventManager(events_manager.EventsManager):
         self.output_device = output_device
         self.logger = logger or logging.getLogger(__name__)
 
-    async def handle_event(self, event: Event):
+    def handle_event(self, event: Event):
         if event.type == EventType.TRANSCRIPT:
             transcript_event = typing.cast(TranscriptEvent, event)
             self.output_device.consume_transcript(transcript_event)
