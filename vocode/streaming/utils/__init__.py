@@ -54,7 +54,7 @@ def convert_wav(
 
 def get_chunk_size_per_second(audio_encoding: AudioEncoding, sampling_rate: int) -> int:
     if audio_encoding == AudioEncoding.LINEAR16:
-        return sampling_rate * 2
+        return sampling_rate * 4
     elif audio_encoding == AudioEncoding.MULAW:
         return sampling_rate
     else:
