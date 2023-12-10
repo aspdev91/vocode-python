@@ -1,3 +1,5 @@
+import os
+import jwt
 import logging
 from typing import Callable, Optional
 import typing
@@ -35,7 +37,24 @@ from vocode.streaming.utils import events_manager
 
 from vocode.streaming.models.message import BaseMessage
 
+import psycopg2
+import asyncio
+from psycopg2.extras import RealDictCursor
+
+
 BASE_CONVERSATION_ENDPOINT = "/conversation"
+
+# Retrieve environment variables
+db_host = os.getenv("CATALYST_DB_HOST")
+db_port = os.getenv("CATALYST_DB_PORT", "5432")
+db_username = os.getenv("CATALYST_DB_USERNAME")
+db_password = os.getenv("CATALYST_DB_PASSWORD")
+db_name = os.getenv("CATALYST_DB_NAME", "catalyst")
+
+# Connect to the database
+db_connection = psycopg2.connect(
+    host=db_host, port=db_port, user=db_username, password=db_password, dbname=db_name
+)
 
 
 class ConversationRouter(BaseRouter):
@@ -73,16 +92,18 @@ class ConversationRouter(BaseRouter):
         self.logger = logger or logging.getLogger(__name__)
         self.router = APIRouter()
         self.router.websocket(conversation_endpoint)(self.conversation)
+        self.users_data = {}
+        asyncio.create_task(self.update_users_data_periodically())
 
     def get_conversation(
         self,
         output_device: WebsocketOutputDevice,
         start_message: AudioConfigStartMessage,
     ) -> StreamingConversation:
-        print("start_message")
-        print(start_message)
+        print("prompt_premable")
         print(type(start_message.prompt_preamble))
         print(start_message.prompt_preamble)
+        print("initial message")
         print(type(start_message.initial_message))
         transcriber = self.transcriber_thunk(start_message.input_audio_config)
         synthesizer = self.synthesizer_thunk(start_message.output_audio_config)
@@ -101,13 +122,47 @@ class ConversationRouter(BaseRouter):
             logger=self.logger,
         )
 
+    async def start_periodic_update(self):
+        # This method should be called after the event loop has started
+        self.update_task = asyncio.create_task(self.update_users_data_periodically())
+
+    async def update_users_data_periodically(self):
+        while True:
+            self.users_data = await fetch_users_data()
+            await asyncio.sleep(30)  # Wait for 30 seconds before fetching again
+
     async def conversation(self, websocket: WebSocket):
         await websocket.accept()
         start_message: AudioConfigStartMessage = AudioConfigStartMessage.parse_obj(
             await websocket.receive_json()
         )
-        print("start message", start_message)
 
+        # Extract the token and find the corresponding user
+
+        if not start_message.auth_token:
+            self.logger.error("No auth token provided in the first message.")
+            await websocket.close()
+            return
+
+        user_id = get_user_id_from_token(start_message.auth_token)
+
+        if not user_id:
+            self.logger.error("Invalid or expired auth token.")
+            await websocket.close()
+            return
+
+        user_data = self.users_data.get(user_id)
+
+        if (
+            user_data
+            and user_data["availableCharacterCount"] - user_data["usedCharacterCount"]
+            < 10
+        ):
+            await websocket.send_json({"error": "INSUFFICIENT_CHARACTER_BALANCE"})
+            await websocket.close()  # Terminate the conversation
+            return
+
+        self.logger.debug(user_data)
         self.logger.debug(f"Conversation started")
         output_device = WebsocketOutputDevice(
             websocket,
@@ -149,3 +204,31 @@ class TranscriptEventManager(events_manager.EventsManager):
 
     def restart(self, output_device: WebsocketOutputDevice):
         self.output_device = output_device
+
+
+async def fetch_users_data():
+    with db_connection.cursor(cursor_factory=RealDictCursor) as cursor:
+        cursor.execute(
+            'SELECT "uuid", "usedCharacterCount", "availableCharacterCount" FROM users'
+        )
+        users_data = cursor.fetchall()
+    users_dict = {user["uuid"]: user for user in users_data}
+
+    return users_dict
+
+
+def get_user_id_from_token(token: str) -> str:
+    secret = os.environ["CATALYST_SUPABASE_JWT_SECRET"]
+    try:
+        # Decode the token
+        payload = jwt.decode(
+            token, secret, algorithms=["HS256"], options={"verify_aud": False}
+        )
+        # Extract user ID from the token payload
+        user_id = payload.get("sub")  # 'sub' usually contains the user ID in JWT tokens
+        return user_id
+    except jwt.ExpiredSignatureError:
+        print("Token expired. Get a new one.")
+    except jwt.InvalidTokenError:
+        print("Invalid Token. Please check.")
+    return None
