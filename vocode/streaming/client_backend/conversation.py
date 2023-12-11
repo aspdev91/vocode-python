@@ -36,25 +36,10 @@ from vocode.streaming.models.transcript import TranscriptEvent
 from vocode.streaming.utils import events_manager
 
 from vocode.streaming.models.message import BaseMessage
-
-import psycopg2
 import asyncio
-from psycopg2.extras import RealDictCursor
 
 
 BASE_CONVERSATION_ENDPOINT = "/conversation"
-
-# Retrieve environment variables
-db_host = os.getenv("CATALYST_DB_HOST")
-db_port = os.getenv("CATALYST_DB_PORT", "5432")
-db_username = os.getenv("CATALYST_DB_USERNAME")
-db_password = os.getenv("CATALYST_DB_PASSWORD")
-db_name = os.getenv("CATALYST_DB_NAME", "catalyst")
-
-# Connect to the database
-# db_connection = psycopg2.connect(
-#     host=db_host, port=db_port, user=db_username, password=db_password, dbname=db_name
-# )
 
 
 class ConversationRouter(BaseRouter):
@@ -208,14 +193,7 @@ class TranscriptEventManager(events_manager.EventsManager):
 
 
 async def fetch_users_data():
-    with db_connection.cursor(cursor_factory=RealDictCursor) as cursor:
-        cursor.execute(
-            'SELECT "uuid", "usedCharacterCount", "availableCharacterCount" FROM users'
-        )
-        users_data = cursor.fetchall()
-    users_dict = {user["uuid"]: user for user in users_data}
-
-    return users_dict
+    return {}
 
 
 def get_user_id_from_token(token: str) -> str:
