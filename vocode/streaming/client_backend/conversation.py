@@ -3,6 +3,7 @@ import jwt
 import logging
 from typing import Callable, Optional
 import typing
+import httpx
 
 from fastapi import APIRouter, WebSocket
 from vocode.streaming.agent.base_agent import BaseAgent
@@ -34,9 +35,23 @@ from vocode.streaming.utils.base_router import BaseRouter
 from vocode.streaming.models.events import Event, EventType
 from vocode.streaming.models.transcript import TranscriptEvent
 from vocode.streaming.utils import events_manager
+from vocode.streaming.models.events import Sender
 
 from vocode.streaming.models.message import BaseMessage
 import asyncio
+
+
+def get_env_var(env_var_name):
+    value = os.environ.get(env_var_name)
+    if value is None:
+        raise EnvironmentError(f"Environment variable '{env_var_name}' is not set.")
+    return value
+
+
+# Set environment variables as Python variables
+CATALYST_API_SERVER_URL = get_env_var("CATALYST_API_SERVER_URL")
+CATALYST_API_SECRET = get_env_var("CATALYST_API_SECRET")
+CATALYST_SUPABASE_JWT_SECRET = get_env_var("CATALYST_SUPABASE_JWT_SECRET")
 
 
 BASE_CONVERSATION_ENDPOINT = "/conversation"
@@ -129,14 +144,20 @@ class ConversationRouter(BaseRouter):
             await websocket.close()
             return
 
-        user_id = get_user_id_from_token(start_message.auth_token)
+        user_uuid = get_user_uuid_from_token(start_message.auth_token)
+        user_id = await fetch_user_id_by_uuid(user_uuid)
 
-        if not user_id:
+        if not user_uuid:
             self.logger.error("Invalid or expired auth token.")
             await websocket.close()
             return
 
-        user_data = self.users_data.get(user_id)
+        user_data = self.users_data.get(user_uuid)
+
+        if not user_data:
+            self.logger.error("User doesn't exist in user data.")
+            await websocket.close()
+            return
 
         if (
             user_data
@@ -155,6 +176,26 @@ class ConversationRouter(BaseRouter):
             start_message.output_audio_config.audio_encoding,
         )
         conversation = self.get_conversation(output_device, start_message)
+        print("CONVERSATION: ", conversation.id)
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"{CATALYST_API_SERVER_URL}/chats/create-chat",
+                headers={"Authorization": f"Bearer {CATALYST_API_SECRET}"},
+                json={
+                    "coachIds": [],  # Add actual coach IDs as required
+                    "cloneIds": [1],
+                    "userIds": [user_id],
+                    "uuid": conversation.id,
+                },
+            )
+            if response.status_code == 200:
+                chat_data = response.json()
+            else:
+                print("Request failed:", response.status_code, response.text)
+                await websocket.send_json({"error": "CHAT_DB_INITIATION_FAILED"})
+                await websocket.close()
+                return
+
         await conversation.start(lambda: websocket.send_text(ReadyMessage().json()))
         while conversation.is_active():
             message: WebSocketMessage = WebSocketMessage.parse_obj(
@@ -183,21 +224,81 @@ class TranscriptEventManager(events_manager.EventsManager):
 
     async def handle_event(self, event: Event):
         if event.type == EventType.TRANSCRIPT:
-            self.logger.debug("HANDLING TRANSCRIPT")
+            # self.logger.debug("HANDLING TRANSCRIPT", event)
             transcript_event = typing.cast(TranscriptEvent, event)
             self.output_device.consume_transcript(transcript_event)
             self.logger.debug(event.dict())
+            await create_message_and_count_characters(event)
 
     def restart(self, output_device: WebsocketOutputDevice):
         self.output_device = output_device
 
 
+async def create_message_and_count_characters(event: Event):
+    if event.sender == Sender.HUMAN:
+        sender_type = "USER"
+    elif event.sender == Sender.BOT:
+        sender_type = "CLONE"
+    print(
+        {
+            "text": event.text,
+            "timestamp": event.timestamp,
+            "chatUUID": event.conversation_id,
+            "senderType": sender_type,
+        }
+    )
+    async with httpx.AsyncClient() as client:
+        try:
+            headers = {"Authorization": f"Bearer {CATALYST_API_SECRET}"}
+            response = await client.post(
+                f"{CATALYST_API_SERVER_URL}/messages",
+                headers=headers,
+                json={
+                    "text": event.text,
+                    "timestamp": event.timestamp,
+                    "chatUUID": event.conversation_id,
+                    "senderType": sender_type,
+                    "messageType": "VOICE",
+                },
+            )
+            response.raise_for_status()
+        except httpx.RequestError as e:
+            print(f"Error creating a new message: {e}")
+            return None
+
+
+async def fetch_user_id_by_uuid(uuid: str):
+    headers = {"Authorization": f"Bearer {CATALYST_API_SECRET}"}
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(
+                f"{CATALYST_API_SERVER_URL}/users/by-uuid",
+                headers=headers,
+                json={"uuid": uuid},
+            )
+            response.raise_for_status()
+            return response.json().get("id")
+        except httpx.RequestError as e:
+            print(f"Error fetching user ID: {e}")
+            return None
+
+
 async def fetch_users_data():
-    return {}
+    headers = {"Authorization": f"Bearer {CATALYST_API_SECRET}"}
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(
+                f"{CATALYST_API_SERVER_URL}/users/all", headers=headers
+            )
+            response.raise_for_status()  # Raises an HTTPError for error responses
+            return response.json()
+        except httpx.RequestError as e:
+            print(f"Error fetching users data: {e}")
+            return {}
 
 
-def get_user_id_from_token(token: str) -> str:
-    secret = os.environ["CATALYST_SUPABASE_JWT_SECRET"]
+def get_user_uuid_from_token(token: str) -> str:
+    secret = CATALYST_SUPABASE_JWT_SECRET
     try:
         # Decode the token
         payload = jwt.decode(
