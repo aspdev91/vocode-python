@@ -128,7 +128,9 @@ class ConversationRouter(BaseRouter):
 
     async def update_users_data_periodically(self):
         while True:
-            self.users_data = await fetch_users_data()
+            newUsersData = await fetch_users_data()
+            if newUsersData:
+                self.users_data = newUsersData
             await asyncio.sleep(30)  # Wait for 30 seconds before fetching again
 
     async def conversation(self, websocket: WebSocket):
@@ -294,7 +296,7 @@ async def fetch_users_data():
             return response.json()
         except httpx.RequestError as e:
             print(f"Error fetching users data: {e}")
-            return {}
+            return None
 
 
 def get_user_uuid_from_token(token: str) -> str:
