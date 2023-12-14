@@ -53,7 +53,7 @@ class TranscriberConfig(TypedModel, type=TranscriberType.BASE.value):
     chunk_size: int
     endpointing_config: Optional[EndpointingConfig] = None
     downsampling: Optional[int] = None
-    min_interrupt_confidence: Optional[float] = None
+    min_interrupt_confidence: Optional[float] = 0.9
     mute_during_speech: bool = False
 
     @validator("min_interrupt_confidence")
