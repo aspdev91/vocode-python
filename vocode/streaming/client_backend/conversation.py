@@ -128,10 +128,15 @@ class ConversationRouter(BaseRouter):
 
     async def update_users_data_periodically(self):
         while True:
-            newUsersData = await fetch_users_data()
-            if newUsersData:
-                self.users_data = newUsersData
-            await asyncio.sleep(30)  # Wait for 30 seconds before fetching again
+            try:
+                newUsersData = await fetch_users_data()
+                if newUsersData:
+                    self.users_data = newUsersData
+            except Exception as e:
+                print(f"Error occurred while fetching user data: {e}")
+                # You can log the error or handle it as needed
+            finally:
+                await asyncio.sleep(30)  # Wait for 30 seconds before fetching again
 
     async def conversation(self, websocket: WebSocket):
         await websocket.accept()
@@ -170,7 +175,6 @@ class ConversationRouter(BaseRouter):
             await websocket.close()  # Terminate the conversation
             return
 
-        self.logger.debug(user_data)
         self.logger.debug(f"Conversation started")
         output_device = WebsocketOutputDevice(
             websocket,
