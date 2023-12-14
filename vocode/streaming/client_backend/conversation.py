@@ -219,7 +219,9 @@ class ConversationRouter(BaseRouter):
                 - user_data["usedCharacterCount"]
                 < 10
             ):
-                print("Closing connection because user has insufficient balance.")
+                print(
+                    "Closing connection during conversation because user has insufficient balance."
+                )
                 await websocket.send_json({"error": "INSUFFICIENT_CHARACTER_BALANCE"})
                 await websocket.close()  # Terminate the conversation
                 return
