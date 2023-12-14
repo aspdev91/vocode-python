@@ -118,7 +118,7 @@ class TwilioCallConfig(BaseCallConfig, type=CallConfigType.TWILIO.value):
             audio_encoding=DEFAULT_AUDIO_ENCODING,
             chunk_size=DEFAULT_CHUNK_SIZE,
             model="phonecall",
-            tier="nova",
+            tier="nova-2",
             endpointing_config=PunctuationEndpointingConfig(),
         )
 
@@ -142,7 +142,7 @@ class VonageCallConfig(BaseCallConfig, type=CallConfigType.VONAGE.value):
             audio_encoding=VONAGE_AUDIO_ENCODING,
             chunk_size=VONAGE_CHUNK_SIZE,
             model="phonecall",
-            tier="nova",
+            tier="nova-2",
             endpointing_config=PunctuationEndpointingConfig(),
         )
 
