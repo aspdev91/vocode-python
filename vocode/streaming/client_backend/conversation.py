@@ -93,6 +93,7 @@ class ConversationRouter(BaseRouter):
         self.router = APIRouter()
         self.router.websocket(conversation_endpoint)(self.conversation)
         self.users_data = {}
+        self.user_uuid = None
         asyncio.create_task(self.update_users_data_periodically())
 
     def get_conversation(
@@ -153,6 +154,7 @@ class ConversationRouter(BaseRouter):
 
         user_uuid = get_user_uuid_from_token(start_message.auth_token)
         user_id = await fetch_user_id_by_uuid(user_uuid)
+        self.user_uuid = user_uuid
 
         if not user_uuid:
             self.logger.error("Invalid or expired auth token.")
@@ -171,6 +173,7 @@ class ConversationRouter(BaseRouter):
             and user_data["availableCharacterCount"] - user_data["usedCharacterCount"]
             < 10
         ):
+            print("Closing connection because user has insufficient balance.")
             await websocket.send_json({"error": "INSUFFICIENT_CHARACTER_BALANCE"})
             await websocket.close()  # Terminate the conversation
             return
@@ -209,6 +212,18 @@ class ConversationRouter(BaseRouter):
             )
             if message.type == WebSocketMessageType.STOP:
                 break
+            user_data = self.users_data.get(self.user_uuid)
+            if (
+                user_data
+                and user_data["availableCharacterCount"]
+                - user_data["usedCharacterCount"]
+                < 10
+            ):
+                print("Closing connection because user has insufficient balance.")
+                await websocket.send_json({"error": "INSUFFICIENT_CHARACTER_BALANCE"})
+                await websocket.close()  # Terminate the conversation
+                return
+
             audio_message = typing.cast(AudioMessage, message)
             conversation.receive_audio(audio_message.get_bytes())
         output_device.mark_closed()
