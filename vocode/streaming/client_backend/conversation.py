@@ -300,7 +300,7 @@ async def fetch_users_data():
             return response.json()
         except httpx.RequestError as e:
             print(f"Error fetching users data: {e}")
-            return None
+            raise
 
 
 def get_user_uuid_from_token(token: str) -> str:
