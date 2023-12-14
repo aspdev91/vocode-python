@@ -152,10 +152,12 @@ class DeepgramTranscriber(BaseAsyncTranscriber[DeepgramTranscriberConfig]):
                 transcript
                 and deepgram_response["speech_final"]
                 and transcript.strip()[-1] in PUNCTUATION_TERMINATORS
+                and time_silent
+                > self.transcriber_config.endpointing_config.time_cutoff_seconds
             ) or (
                 not transcript
                 and current_buffer
-                and (time_silent + deepgram_response["duration"])
+                and time_silent
                 > self.transcriber_config.endpointing_config.time_cutoff_seconds
             )
         raise Exception("Endpointing config not supported")
