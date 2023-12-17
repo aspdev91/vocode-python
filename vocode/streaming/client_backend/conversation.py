@@ -13,6 +13,7 @@ from vocode.streaming.models.synthesizer import AzureSynthesizerConfig
 from vocode.streaming.models.transcriber import (
     DeepgramTranscriberConfig,
     PunctuationEndpointingConfig,
+    TimeEndpointingConfig,
 )
 from vocode.streaming.models.agent import ChatGPTAgentConfig
 from vocode.streaming.agent.chat_gpt_agent import ChatGPTAgent
@@ -72,7 +73,7 @@ class ConversationRouter(BaseRouter):
         ] = lambda input_audio_config: DeepgramTranscriber(
             DeepgramTranscriberConfig.from_input_audio_config(
                 _audio_config=input_audio_config,
-                endpointing_config=PunctuationEndpointingConfig(),
+                endpointing_config=TimeEndpointingConfig(1.5),
             )
         ),
         synthesizer_thunk: Callable[
