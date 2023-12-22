@@ -3,6 +3,7 @@ import asyncio
 import logging
 import sys
 from typing import Optional
+import base64
 
 from aiohttp import ClientSession, ClientTimeout
 from vocode import getenv
@@ -24,7 +25,8 @@ if play_ht_backup is None:
     sys.exit("Missing PLAY_HT_BACKUP environment variable")
 
 try:
-    backup_credentials = json.loads(play_ht_backup)
+    backup_credentials = json.loads(base64.b64decode(getenv("PLAY_HT_BACKUP")).decode())
+
 except json.JSONDecodeError:
     print("Failed to parse PLAY_HT_BACKUP as JSON")
     sys.exit("Invalid JSON in PLAY_HT_BACKUP environment variable")
