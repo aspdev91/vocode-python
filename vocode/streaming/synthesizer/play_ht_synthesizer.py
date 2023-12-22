@@ -1,6 +1,7 @@
 import json
 import asyncio
 import logging
+import sys
 from typing import Optional
 
 from aiohttp import ClientSession, ClientTimeout
@@ -17,7 +18,16 @@ from vocode.streaming.utils.mp3_helper import decode_mp3
 
 TTS_ENDPOINT = "https://play.ht/api/v2/tts/stream"
 
-backup_credentials = json.loads(getenv("PLAY_HT_BACKUP"))
+play_ht_backup = getenv("PLAY_HT_BACKUP")
+if play_ht_backup is None:
+    print("PLAY_HT_BACKUP environment variable is not set")
+    sys.exit("Missing PLAY_HT_BACKUP environment variable")
+
+try:
+    backup_credentials = json.loads(play_ht_backup)
+except json.JSONDecodeError:
+    print("Failed to parse PLAY_HT_BACKUP as JSON")
+    sys.exit("Invalid JSON in PLAY_HT_BACKUP environment variable")
 
 
 class PlayHtSynthesizer(BaseSynthesizer[PlayHtSynthesizerConfig]):
