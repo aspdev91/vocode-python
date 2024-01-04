@@ -4,7 +4,9 @@ import logging
 from typing import Callable, Optional
 import typing
 import httpx
+import time
 
+from starlette.websockets import WebSocketDisconnect
 from fastapi import APIRouter, WebSocket
 from vocode.streaming.agent.base_agent import BaseAgent
 from vocode.streaming.models.audio_encoding import AudioEncoding
@@ -95,6 +97,7 @@ class ConversationRouter(BaseRouter):
         self.router.websocket(conversation_endpoint)(self.conversation)
         self.users_data = {}
         self.user_uuid = None
+        self.chat_id = None
         asyncio.create_task(self.update_users_data_periodically())
 
     def get_conversation(
@@ -200,6 +203,7 @@ class ConversationRouter(BaseRouter):
             )
             if response.status_code == 200:
                 chat_data = response.json()
+                self.chat_id = chat_data.get("conversationId")
             else:
                 print("Request failed:", response.status_code, response.text)
                 await websocket.send_json({"error": "CHAT_DB_INITIATION_FAILED"})
@@ -207,30 +211,37 @@ class ConversationRouter(BaseRouter):
                 return
 
         await conversation.start(lambda: websocket.send_text(ReadyMessage().json()))
-        while conversation.is_active():
-            message: WebSocketMessage = WebSocketMessage.parse_obj(
-                await websocket.receive_json()
-            )
-            if message.type == WebSocketMessageType.STOP:
-                break
-            user_data = self.users_data.get(self.user_uuid)
-            if (
-                user_data
-                and user_data["availableCharacterCount"]
-                - user_data["usedCharacterCount"]
-                < 10
-            ):
-                print(
-                    "Closing connection during conversation because user has insufficient balance."
+        try:
+            while conversation.is_active():
+                message: WebSocketMessage = WebSocketMessage.parse_obj(
+                    await websocket.receive_json()
                 )
-                await websocket.send_json({"error": "INSUFFICIENT_CHARACTER_BALANCE"})
-                await websocket.close()  # Terminate the conversation
-                return
+                if message.type == WebSocketMessageType.STOP:
+                    break
+                user_data = self.users_data.get(self.user_uuid)
+                if (
+                    user_data
+                    and user_data["availableCharacterCount"]
+                    - user_data["usedCharacterCount"]
+                    < 10
+                ):
+                    print(
+                        "Closing connection during conversation because user has insufficient balance."
+                    )
+                    await websocket.send_json(
+                        {"error": "INSUFFICIENT_CHARACTER_BALANCE"}
+                    )
+                    await websocket.close()  # Terminate the conversation
+                    return
 
-            audio_message = typing.cast(AudioMessage, message)
-            conversation.receive_audio(audio_message.get_bytes())
-        output_device.mark_closed()
-        await conversation.terminate()
+                audio_message = typing.cast(AudioMessage, message)
+                conversation.receive_audio(audio_message.get_bytes())
+        except WebSocketDisconnect as e:
+            self.logger.error(f"WebSocket disconnected: {e.code}")
+        finally:
+            output_device.mark_closed()
+            await update_chat(self.chat_id, int(time.time()))
+            await conversation.terminate()
 
     def get_router(self) -> APIRouter:
         return self.router
@@ -253,9 +264,36 @@ class TranscriptEventManager(events_manager.EventsManager):
             self.output_device.consume_transcript(transcript_event)
             self.logger.debug(event.dict())
             await create_message_and_count_characters(event)
+        if event.type == EventType.TRANSCRIPT_COMPLETE:
+            self.logger.debug("TRANSCRIPT COMPLETE", event)
 
     def restart(self, output_device: WebsocketOutputDevice):
         self.output_device = output_device
+
+
+async def update_chat(chat_id: str, ended_at_timestamp: int):
+    """
+    Sends a PUT request to update a chat's status with the given chat ID and timestamp.
+
+    :param chat_id: The ID of the chat to be updated.
+    :param ended_at_timestamp: The Unix timestamp at which the chat ended.
+    """
+    url = f"{CATALYST_API_SERVER_URL}/chats/updateChat"
+    headers = {
+        "Authorization": f"Bearer {CATALYST_API_SECRET}",  # Assuming this is the header used across your application
+        "Content-Type": "application/json",
+    }
+    json_data = {"chatId": chat_id, "endedAtTimestamp": ended_at_timestamp * 1000}
+
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.put(url, headers=headers, json=json_data)
+            response.raise_for_status()
+            # return response.json()
+        except httpx.HTTPStatusError as e:
+            print(f"HTTP error occurred: {e.response.status_code}")
+        except httpx.RequestError as e:
+            print(f"An error occurred while requesting {e.request.url!r}.")
 
 
 async def create_message_and_count_characters(event: Event):
