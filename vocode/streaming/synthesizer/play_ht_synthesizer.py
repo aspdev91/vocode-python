@@ -25,7 +25,7 @@ if play_ht_backup is None:
     sys.exit("Missing PLAY_HT_BACKUP environment variable")
 
 try:
-    backup_credentials = json.loads(base64.b64decode(getenv("PLAY_HT_BACKUP")).decode())
+    backup_credentials = json.loads(base64.b64decode(play_ht_backup).decode())
 
 except json.JSONDecodeError:
     print("Failed to parse PLAY_HT_BACKUP as JSON")

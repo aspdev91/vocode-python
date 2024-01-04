@@ -312,7 +312,8 @@ async def fetch_users_data():
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(
-                f"{CATALYST_API_SERVER_URL}/users/all", headers=headers
+                f"{CATALYST_API_SERVER_URL}/users/remainingCharacterCountForAllUsers",
+                headers=headers,
             )
             response.raise_for_status()  # Raises an HTTPError for error responses
             return response.json()
