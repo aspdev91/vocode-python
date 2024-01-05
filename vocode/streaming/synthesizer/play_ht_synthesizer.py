@@ -17,6 +17,9 @@ from vocode.streaming.synthesizer.base_synthesizer import (
 )
 from vocode.streaming.utils.mp3_helper import decode_mp3
 
+from vocode.streaming.synthesizer.eleven_labs_synthesizer import ElevenLabsSynthesizer
+from vocode.streaming.models.synthesizer import ElevenLabsSynthesizerConfig
+
 TTS_ENDPOINT = "https://play.ht/api/v2/tts/stream"
 
 play_ht_backup = getenv("PLAY_HT_BACKUP")
@@ -24,9 +27,13 @@ if play_ht_backup is None:
     print("PLAY_HT_BACKUP environment variable is not set")
     sys.exit("Missing PLAY_HT_BACKUP environment variable")
 
+eleven_labs_api_key = getenv("ELEVEN_LABS_API_KEY")
+if eleven_labs_api_key is None:
+    print("ELEVEN_LABS_API_KEY environment variable is not set")
+    sys.exit("Missing ELEVEN_LABS_API_KEY environment variable")
+
 try:
     backup_credentials = json.loads(base64.b64decode(play_ht_backup).decode())
-
 except json.JSONDecodeError:
     print("Failed to parse PLAY_HT_BACKUP as JSON")
     sys.exit("Invalid JSON in PLAY_HT_BACKUP environment variable")
@@ -41,9 +48,11 @@ class PlayHtSynthesizer(BaseSynthesizer[PlayHtSynthesizerConfig]):
     ):
         super().__init__(synthesizer_config, aiohttp_session)
         self.logger = logger or logging.getLogger(__name__)
+
         self.synthesizer_config = synthesizer_config
         self.api_key = synthesizer_config.api_key or getenv("PLAY_HT_API_KEY")
         self.user_id = synthesizer_config.user_id or getenv("PLAY_HT_USER_ID")
+        self.backup_eleven_labs_synthesizer_api_key = getenv("ELEVEN_LABS_API_KEY")
         if not self.api_key or not self.user_id:
             raise ValueError(
                 "You must set the PLAY_HT_API_KEY and PLAY_HT_USER_ID environment variables"
@@ -127,8 +136,35 @@ class PlayHtSynthesizer(BaseSynthesizer[PlayHtSynthesizerConfig]):
                         return result
 
             except Exception as e:
-                self.logger.error(
-                    f"Error with Play.ht API using userId {credentials['userId']}: {e}"
+                self.logger.error(f"Failed to create speech with Play.ht: {e}")
+                self.logger.info("Attempting with Eleven Labs Synthesizer")
+
+                # Configure Eleven Labs synthesizer here
+                eleven_labs_config = ElevenLabsSynthesizerConfig(
+                    # Set your Eleven Labs configuration parameters here
+                    api_key=self.backup_eleven_labs_synthesizer_api_key,
+                    voice_id="Y8ljZnfwX14S0JfyoEFq",
+                    synthesizer_config=self.synthesizer_config,
+                    sampling_rate=self.synthesizer_config.sampling_rate,
+                    audio_encoding=self.synthesizer_config.audio_encoding,
+                    should_encode_as_wav=True
+                    # ... Other configuration parameters ...
                 )
+                eleven_labs_synthesizer = ElevenLabsSynthesizer(
+                    synthesizer_config=eleven_labs_config,
+                    logger=self.logger,
+                    aiohttp_session=self.aiohttp_session,
+                )
+
+                # Attempt to create speech using Eleven Labs
+                try:
+                    return await eleven_labs_synthesizer.create_speech(
+                        message, chunk_size
+                    )
+                except Exception as e:
+                    self.logger.error(f"Failed to create speech with Eleven Labs: {e}")
+                    raise Exception(
+                        "Failed to create speech with all available services"
+                    )
 
         raise Exception("Failed to create speech with all credential combinations")
