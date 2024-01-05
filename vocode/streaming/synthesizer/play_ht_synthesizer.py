@@ -66,6 +66,34 @@ class PlayHtSynthesizer(BaseSynthesizer[PlayHtSynthesizerConfig]):
         chunk_size: int,
         bot_sentiment: Optional[BotSentiment] = None,
     ) -> SynthesisResult:
+        self.logger.info("Attempting with Eleven Labs Synthesizer")
+
+        # Configure Eleven Labs synthesizer here
+        eleven_labs_config = ElevenLabsSynthesizerConfig(
+            # Set your Eleven Labs configuration parameters here
+            api_key=self.backup_eleven_labs_synthesizer_api_key,
+            voice_id="Y8ljZnfwX14S0JfyoEFq",
+            synthesizer_config=self.synthesizer_config,
+            sampling_rate=self.synthesizer_config.sampling_rate,
+            audio_encoding=self.synthesizer_config.audio_encoding,
+            should_encode_as_wav=True
+            # ... Other configuration parameters ...
+        )
+
+        eleven_labs_synthesizer = ElevenLabsSynthesizer(
+            synthesizer_config=eleven_labs_config,
+            logger=self.logger,
+            aiohttp_session=self.aiohttp_session,
+        )
+
+        # Attempt to create speech using Eleven Labs
+        try:
+            return await eleven_labs_synthesizer.create_speech(message, chunk_size)
+        except Exception as e:
+            self.logger.error(
+                f"Trying PlayHT.Failed to create speech with Eleven Labs: {e}"
+            )
+
         credential_combinations = [
             {
                 "apiKey": self.api_key,
@@ -137,34 +165,5 @@ class PlayHtSynthesizer(BaseSynthesizer[PlayHtSynthesizerConfig]):
 
             except Exception as e:
                 self.logger.error(f"Failed to create speech with Play.ht: {e}")
-                self.logger.info("Attempting with Eleven Labs Synthesizer")
-
-                # Configure Eleven Labs synthesizer here
-                eleven_labs_config = ElevenLabsSynthesizerConfig(
-                    # Set your Eleven Labs configuration parameters here
-                    api_key=self.backup_eleven_labs_synthesizer_api_key,
-                    voice_id="Y8ljZnfwX14S0JfyoEFq",
-                    synthesizer_config=self.synthesizer_config,
-                    sampling_rate=self.synthesizer_config.sampling_rate,
-                    audio_encoding=self.synthesizer_config.audio_encoding,
-                    should_encode_as_wav=True
-                    # ... Other configuration parameters ...
-                )
-                eleven_labs_synthesizer = ElevenLabsSynthesizer(
-                    synthesizer_config=eleven_labs_config,
-                    logger=self.logger,
-                    aiohttp_session=self.aiohttp_session,
-                )
-
-                # Attempt to create speech using Eleven Labs
-                try:
-                    return await eleven_labs_synthesizer.create_speech(
-                        message, chunk_size
-                    )
-                except Exception as e:
-                    self.logger.error(f"Failed to create speech with Eleven Labs: {e}")
-                    raise Exception(
-                        "Failed to create speech with all available services"
-                    )
 
         raise Exception("Failed to create speech with all credential combinations")
