@@ -96,6 +96,7 @@ class ConversationRouter(BaseRouter):
         self.router = APIRouter()
         self.router.websocket(conversation_endpoint)(self.conversation)
         self.users_data = {}
+        self.user_id = None
         self.user_uuid = None
         self.chat_id = None
         asyncio.create_task(self.update_users_data_periodically())
@@ -158,6 +159,7 @@ class ConversationRouter(BaseRouter):
 
         user_uuid = get_user_uuid_from_token(start_message.auth_token)
         user_id = await fetch_user_id_by_uuid(user_uuid)
+        self.user_id = user_id
         self.user_uuid = user_uuid
 
         if not user_uuid:
@@ -172,13 +174,9 @@ class ConversationRouter(BaseRouter):
             await websocket.close()
             return
 
-        if (
-            user_data
-            and user_data["availableCharacterCount"] - user_data["usedCharacterCount"]
-            < 10
-        ):
+        if user_data["remainingTalkTime"] < 1:
             print("Closing connection because user has insufficient balance.")
-            await websocket.send_json({"error": "INSUFFICIENT_CHARACTER_BALANCE"})
+            await websocket.send_json({"error": "INSUFFICIENT_TALK_TIME"})
             await websocket.close()  # Terminate the conversation
             return
 
@@ -219,12 +217,7 @@ class ConversationRouter(BaseRouter):
                 if message.type == WebSocketMessageType.STOP:
                     break
                 user_data = self.users_data.get(self.user_uuid)
-                if (
-                    user_data
-                    and user_data["availableCharacterCount"]
-                    - user_data["usedCharacterCount"]
-                    < 10
-                ):
+                if user_data["remainingTalkTime"] < 1:
                     print(
                         "Closing connection during conversation because user has insufficient balance."
                     )
@@ -240,7 +233,7 @@ class ConversationRouter(BaseRouter):
             self.logger.error(f"WebSocket disconnected: {e.code}")
         finally:
             output_device.mark_closed()
-            await update_chat(self.chat_id, int(time.time()))
+            await update_chat(self.chat_id, int(time.time()), self.user_id)
             await conversation.terminate()
 
     def get_router(self) -> APIRouter:
@@ -271,7 +264,7 @@ class TranscriptEventManager(events_manager.EventsManager):
         self.output_device = output_device
 
 
-async def update_chat(chat_id: str, ended_at_timestamp: int):
+async def update_chat(chat_id: int, ended_at_timestamp: int, user_id: int):
     """
     Sends a PUT request to update a chat's status with the given chat ID and timestamp.
 
@@ -283,7 +276,11 @@ async def update_chat(chat_id: str, ended_at_timestamp: int):
         "Authorization": f"Bearer {CATALYST_API_SECRET}",  # Assuming this is the header used across your application
         "Content-Type": "application/json",
     }
-    json_data = {"chatId": chat_id, "endedAtTimestamp": ended_at_timestamp * 1000}
+    json_data = {
+        "chatId": chat_id,
+        "endedAtTimestamp": ended_at_timestamp * 1000,
+        "userId": user_id,
+    }
 
     async with httpx.AsyncClient() as client:
         try:
@@ -350,7 +347,7 @@ async def fetch_users_data():
     async with httpx.AsyncClient() as client:
         try:
             response = await client.get(
-                f"{CATALYST_API_SERVER_URL}/users/remainingCharacterCountForAllUsers",
+                f"{CATALYST_API_SERVER_URL}/users/remainingTalkTimeForAllUsers",
                 headers=headers,
             )
             response.raise_for_status()  # Raises an HTTPError for error responses
