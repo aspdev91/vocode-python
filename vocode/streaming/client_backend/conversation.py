@@ -105,21 +105,16 @@ class ConversationRouter(BaseRouter):
         self,
         output_device: WebsocketOutputDevice,
         start_message: AudioConfigStartMessage,
+        prompt_preamble: str,
+        initial_message: str,
     ) -> StreamingConversation:
-        print("prompt_premable")
-        print(type(start_message.prompt_preamble))
-        print(start_message.prompt_preamble)
-        print("initial message")
-        print(type(start_message.initial_message))
         transcriber = self.transcriber_thunk(start_message.input_audio_config)
         synthesizer = self.synthesizer_thunk(start_message.output_audio_config)
         synthesizer.synthesizer_config.should_encode_as_wav = True
         return StreamingConversation(
             output_device=output_device,
             transcriber=transcriber,
-            agent=self.agent_thunk(
-                start_message.prompt_preamble, start_message.initial_message
-            ),
+            agent=self.agent_thunk(prompt_preamble, BaseMessage(text=initial_message)),
             synthesizer=synthesizer,
             conversation_id=start_message.conversation_id,
             events_manager=TranscriptEventManager(output_device, self.logger)
@@ -144,70 +139,12 @@ class ConversationRouter(BaseRouter):
             finally:
                 await asyncio.sleep(30)  # Wait for 30 seconds before fetching again
 
-    async def conversation(self, websocket: WebSocket):
-        await websocket.accept()
-        start_message: AudioConfigStartMessage = AudioConfigStartMessage.parse_obj(
-            await websocket.receive_json()
-        )
-
-        # Extract the token and find the corresponding user
-
-        if not start_message.auth_token:
-            self.logger.error("No auth token provided in the first message.")
-            await websocket.close()
-            return
-
-        user_uuid = get_user_uuid_from_token(start_message.auth_token)
-        user_id = await fetch_user_id_by_uuid(user_uuid)
-        self.user_id = user_id
-        self.user_uuid = user_uuid
-
-        if not user_uuid:
-            self.logger.error("Invalid or expired auth token.")
-            await websocket.close()
-            return
-
-        user_data = self.users_data.get(user_uuid)
-
-        if not user_data:
-            self.logger.error("User doesn't exist in user data.")
-            await websocket.close()
-            return
-
-        if user_data["remainingTalkTime"] < 1:
-            print("Closing connection because user has insufficient balance.")
-            await websocket.send_json({"error": "INSUFFICIENT_TALK_TIME"})
-            await websocket.close()  # Terminate the conversation
-            return
-
-        self.logger.debug(f"Conversation started")
-        output_device = WebsocketOutputDevice(
-            websocket,
-            start_message.output_audio_config.sampling_rate,
-            start_message.output_audio_config.audio_encoding,
-        )
-        conversation = self.get_conversation(output_device, start_message)
-        print("CONVERSATION: ", conversation.id)
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{CATALYST_API_SERVER_URL}/chats/create-chat",
-                headers={"Authorization": f"Bearer {CATALYST_API_SECRET}"},
-                json={
-                    "coachIds": [],  # Add actual coach IDs as required
-                    "cloneIds": [1],
-                    "userIds": [user_id],
-                    "uuid": conversation.id,
-                },
-            )
-            if response.status_code == 200:
-                chat_data = response.json()
-                self.chat_id = chat_data.get("conversationId")
-            else:
-                print("Request failed:", response.status_code, response.text)
-                await websocket.send_json({"error": "CHAT_DB_INITIATION_FAILED"})
-                await websocket.close()
-                return
-
+    async def start_conversation(
+        self,
+        conversation: StreamingConversation,
+        websocket: WebSocket,
+        output_device: WebsocketOutputDevice,
+    ):
         await conversation.start(lambda: websocket.send_text(ReadyMessage().json()))
         try:
             while conversation.is_active():
@@ -235,6 +172,74 @@ class ConversationRouter(BaseRouter):
             output_device.mark_closed()
             await update_chat(self.chat_id, int(time.time()), self.user_id)
             await conversation.terminate()
+
+    async def conversation(self, websocket: WebSocket):
+        await websocket.accept()
+        start_message: AudioConfigStartMessage = AudioConfigStartMessage.parse_obj(
+            await websocket.receive_json()
+        )
+
+        # Extract the token and find the corresponding user
+
+        if not start_message.auth_token:
+            self.logger.error("No auth token provided in the first message.")
+            await websocket.close()
+            return
+
+        if not start_message.conversation_id:
+            self.logger.error("No conversation id provided in the first message.")
+            await websocket.close()
+            return
+
+        user_uuid = get_user_uuid_from_token(start_message.auth_token)
+        user_id = await fetch_user_id_by_uuid(user_uuid)
+        self.user_id = user_id
+        self.user_uuid = user_uuid
+
+        chat = await fetch_chat_by_uuid(start_message.conversation_id, self.user_id)
+        start_message
+
+        self.chat_id = chat.get("id")
+
+        if not user_uuid:
+            self.logger.error("Invalid or expired auth token.")
+            await websocket.close()
+            return
+
+        user_data = self.users_data.get(user_uuid)
+
+        if not chat.get("promptPreamble") or not chat.get("initialMessage"):
+            self.logger.error(
+                "No prompt preamble or initial message found in chat.", chat
+            )
+            await websocket.close()
+            return
+
+        if not user_data:
+            self.logger.error("User doesn't exist in user data.")
+            await websocket.close()
+            return
+
+        if user_data["remainingTalkTime"] < 1:
+            print("Closing connection because user has insufficient balance.")
+            await websocket.send_json({"error": "INSUFFICIENT_TALK_TIME"})
+            await websocket.close()  # Terminate the conversation
+            return
+
+        output_device = WebsocketOutputDevice(
+            websocket,
+            start_message.output_audio_config.sampling_rate,
+            start_message.output_audio_config.audio_encoding,
+        )
+
+        self.logger.debug(f"Conversation started")
+        conversation = self.get_conversation(
+            output_device,
+            start_message,
+            chat.get("promptPreamble"),
+            chat.get("initialMessage"),
+        )
+        await self.start_conversation(conversation, websocket, output_device)
 
     def get_router(self) -> APIRouter:
         return self.router
@@ -339,6 +344,22 @@ async def fetch_user_id_by_uuid(uuid: str):
             return response.json().get("id")
         except httpx.RequestError as e:
             print(f"Error fetching user ID: {e}")
+            return None
+
+
+async def fetch_chat_by_uuid(uuid: str, user_id: int):
+    headers = {"Authorization": f"Bearer {CATALYST_API_SECRET}"}
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(
+                f"{CATALYST_API_SERVER_URL}/chats/by-uuid",
+                headers=headers,
+                json={"uuid": uuid, "userId": user_id},
+            )
+            response.raise_for_status()
+            return response.json()
+        except httpx.RequestError as e:
+            print(f"Error fetching conversation: {e}")
             return None
 
 

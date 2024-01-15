@@ -60,10 +60,8 @@ class AudioConfigStartMessage(
 ):
     input_audio_config: InputAudioConfig
     output_audio_config: OutputAudioConfig
-    conversation_id: Optional[str] = None
+    conversation_id: str
     subscribe_transcript: Optional[bool] = None
-    initial_message: Optional[BaseMessage] = None
-    prompt_preamble: str
     auth_token: str
 
 
