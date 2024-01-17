@@ -204,7 +204,7 @@ class ConversationRouter(BaseRouter):
         )
         start_message
 
-        self.chat_id = conversation.get("id")
+        self.conversation_id = conversation.get("id")
 
         if not user_uuid:
             self.logger.error("Invalid or expired auth token.")
