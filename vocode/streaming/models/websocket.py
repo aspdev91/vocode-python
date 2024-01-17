@@ -63,6 +63,7 @@ class AudioConfigStartMessage(
     conversation_id: str
     subscribe_transcript: Optional[bool] = None
     auth_token: str
+    continue_conversation: Optional[bool] = None
 
 
 class ReadyMessage(WebSocketMessage, type=WebSocketMessageType.READY):

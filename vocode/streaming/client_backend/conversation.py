@@ -98,7 +98,7 @@ class ConversationRouter(BaseRouter):
         self.users_data = {}
         self.user_id = None
         self.user_uuid = None
-        self.chat_id = None
+        self.conversation_id = None
         asyncio.create_task(self.update_users_data_periodically())
 
     def get_conversation(
@@ -107,6 +107,7 @@ class ConversationRouter(BaseRouter):
         start_message: AudioConfigStartMessage,
         prompt_preamble: str,
         initial_message: str,
+        continue_conversation: Optional[bool] = False,
     ) -> StreamingConversation:
         transcriber = self.transcriber_thunk(start_message.input_audio_config)
         synthesizer = self.synthesizer_thunk(start_message.output_audio_config)
@@ -170,7 +171,9 @@ class ConversationRouter(BaseRouter):
             self.logger.error(f"WebSocket disconnected: {e.code}")
         finally:
             output_device.mark_closed()
-            await update_chat(self.chat_id, int(time.time()), self.user_id)
+            await update_conversation(
+                self.conversation_id, int(time.time()), self.user_id
+            )
             await conversation.terminate()
 
     async def conversation(self, websocket: WebSocket):
@@ -196,10 +199,12 @@ class ConversationRouter(BaseRouter):
         self.user_id = user_id
         self.user_uuid = user_uuid
 
-        chat = await fetch_chat_by_uuid(start_message.conversation_id, self.user_id)
+        conversation = await fetch_conversation_by_uuid(
+            start_message.conversation_id, self.user_id
+        )
         start_message
 
-        self.chat_id = chat.get("id")
+        self.chat_id = conversation.get("id")
 
         if not user_uuid:
             self.logger.error("Invalid or expired auth token.")
@@ -208,9 +213,12 @@ class ConversationRouter(BaseRouter):
 
         user_data = self.users_data.get(user_uuid)
 
-        if not chat.get("promptPreamble") or not chat.get("initialMessage"):
+        if not conversation.get("promptPreamble") or not conversation.get(
+            "initialMessage"
+        ):
             self.logger.error(
-                "No prompt preamble or initial message found in chat.", chat
+                "No prompt preamble or initial message found in conversation.",
+                conversation,
             )
             await websocket.close()
             return
@@ -236,8 +244,9 @@ class ConversationRouter(BaseRouter):
         conversation = self.get_conversation(
             output_device,
             start_message,
-            chat.get("promptPreamble"),
-            chat.get("initialMessage"),
+            conversation.get("promptPreamble"),
+            conversation.get("initialMessage"),
+            start_message.continue_conversation,
         )
         await self.start_conversation(conversation, websocket, output_device)
 
@@ -269,20 +278,16 @@ class TranscriptEventManager(events_manager.EventsManager):
         self.output_device = output_device
 
 
-async def update_chat(chat_id: int, ended_at_timestamp: int, user_id: int):
-    """
-    Sends a PUT request to update a chat's status with the given chat ID and timestamp.
-
-    :param chat_id: The ID of the chat to be updated.
-    :param ended_at_timestamp: The Unix timestamp at which the chat ended.
-    """
-    url = f"{CATALYST_API_SERVER_URL}/chats/updateChat"
+async def update_conversation(
+    conversation_id: int, ended_at_timestamp: int, user_id: int
+):
+    url = f"{CATALYST_API_SERVER_URL}/chats/updateConversation"
     headers = {
-        "Authorization": f"Bearer {CATALYST_API_SECRET}",  # Assuming this is the header used across your application
+        "Authorization": f"Bearer {CATALYST_API_SECRET}",
         "Content-Type": "application/json",
     }
     json_data = {
-        "chatId": chat_id,
+        "conversationId": conversation_id,
         "endedAtTimestamp": ended_at_timestamp * 1000,
         "userId": user_id,
     }
@@ -291,7 +296,7 @@ async def update_chat(chat_id: int, ended_at_timestamp: int, user_id: int):
         try:
             response = await client.put(url, headers=headers, json=json_data)
             response.raise_for_status()
-            # return response.json()
+
         except httpx.HTTPStatusError as e:
             print(f"HTTP error occurred: {e.response.status_code}")
         except httpx.RequestError as e:
@@ -307,7 +312,7 @@ async def create_message_and_count_characters(event: Event):
         {
             "text": event.text,
             "timestamp": event.timestamp,
-            "chatUUID": event.conversation_id,
+            "conversationUUID": event.conversation_id,
             "senderType": sender_type,
         }
     )
@@ -320,7 +325,7 @@ async def create_message_and_count_characters(event: Event):
                 json={
                     "text": event.text,
                     "timestamp": event.timestamp,
-                    "chatUUID": event.conversation_id,
+                    "conversationUUID": event.conversation_id,
                     "senderType": sender_type,
                     "messageType": "VOICE",
                 },
@@ -347,12 +352,12 @@ async def fetch_user_id_by_uuid(uuid: str):
             return None
 
 
-async def fetch_chat_by_uuid(uuid: str, user_id: int):
+async def fetch_conversation_by_uuid(uuid: str, user_id: int):
     headers = {"Authorization": f"Bearer {CATALYST_API_SECRET}"}
     async with httpx.AsyncClient() as client:
         try:
             response = await client.post(
-                f"{CATALYST_API_SERVER_URL}/chats/by-uuid",
+                f"{CATALYST_API_SERVER_URL}/chats/conversation-by-uuid",
                 headers=headers,
                 json={"uuid": uuid, "userId": user_id},
             )
