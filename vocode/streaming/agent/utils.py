@@ -144,9 +144,14 @@ def format_openai_chat_messages_from_transcript(
 
     for event_log in new_event_logs:
         if isinstance(event_log, Message):
+            role = "user"
+            if event_log.sender == Sender.BOT:
+                role = "assistant"
+            elif event_log.sender == Sender.SYSTEM:
+                role = "system"
             chat_messages.append(
                 {
-                    "role": "assistant" if event_log.sender == Sender.BOT else "user",
+                    "role": role,
                     "content": event_log.text,
                 }
             )

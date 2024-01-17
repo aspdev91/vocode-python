@@ -68,6 +68,9 @@ from vocode.streaming.utils.worker import (
     InterruptibleWorker,
 )
 
+from vocode.streaming.compa_api.types import StoredMessage
+from typing import List
+
 OutputDeviceType = TypeVar("OutputDeviceType", bound=BaseOutputDevice)
 
 
@@ -382,8 +385,10 @@ class StreamingConversation(Generic[OutputDeviceType]):
         per_chunk_allowance_seconds: float = PER_CHUNK_ALLOWANCE_SECONDS,
         events_manager: Optional[EventsManager] = None,
         logger: Optional[logging.Logger] = None,
+        past_transcript=Optional[List[StoredMessage]],
     ):
         self.id = conversation_id or create_conversation_id()
+        self.past_transcript = past_transcript
         self.logger = wrap_logger(
             logger or logging.getLogger(__name__),
             conversation_id=self.id,
@@ -496,9 +501,32 @@ class StreamingConversation(Generic[OutputDeviceType]):
 
         self.agent.start()
         initial_message = self.agent.get_agent_config().initial_message
-        if initial_message:
-            asyncio.create_task(self.send_initial_message(initial_message))
+
+        for stored_message in self.past_transcript:
+            text = stored_message["message"]
+            sender_type = stored_message["messageSender"]["type"]
+
+            if sender_type == "BOT":
+                self.transcript.add_bot_message(
+                    text, self.id, publish_to_events_manager=False
+                )
+            elif sender_type == "USER":
+                self.transcript.add_human_message(
+                    text, self.id, publish_to_events_manager=False
+                )
+        if len(self.past_transcript) > 0:
+            self.transcript.add_message_from_props(
+                self.agent.get_agent_config().prompt_preamble
+                + "\n\nThe user is resuming the conversation. Transition smoothly.Look for the last question you asked in the conversation that was not yet answered and ask the client that.",
+                Sender.SYSTEM,
+                self.id,
+                publish_to_events_manager=True,
+            )
+
         self.agent.attach_transcript(self.transcript)
+
+        asyncio.create_task(self.send_initial_message(initial_message))
+
         if mark_ready:
             await mark_ready()
         if self.synthesizer.get_synthesizer_config().sentiment_config:

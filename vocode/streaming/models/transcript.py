@@ -104,18 +104,27 @@ class Transcript(BaseModel):
                 message=message, conversation_id=conversation_id
             )
 
-    def add_human_message(self, text: str, conversation_id: str):
+    def add_human_message(
+        self,
+        text: str,
+        conversation_id: str,
+        publish_to_events_manager: bool = True,
+    ):
         self.add_message_from_props(
             text=text,
             sender=Sender.HUMAN,
             conversation_id=conversation_id,
+            publish_to_events_manager=publish_to_events_manager,
         )
 
-    def add_bot_message(self, text: str, conversation_id: str):
+    def add_bot_message(
+        self, text: str, conversation_id: str, publish_to_events_manager: bool = True
+    ):
         self.add_message_from_props(
             text=text,
             sender=Sender.BOT,
             conversation_id=conversation_id,
+            publish_to_events_manager=publish_to_events_manager,
         )
 
     def get_last_user_message(self):

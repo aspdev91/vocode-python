@@ -43,6 +43,9 @@ from vocode.streaming.models.events import Sender
 from vocode.streaming.models.message import BaseMessage
 import asyncio
 
+from vocode.streaming.compa_api.types import StoredMessage
+from typing import List
+
 
 def get_env_var(env_var_name):
     value = os.environ.get(env_var_name)
@@ -107,7 +110,7 @@ class ConversationRouter(BaseRouter):
         start_message: AudioConfigStartMessage,
         prompt_preamble: str,
         initial_message: str,
-        continue_conversation: Optional[bool] = False,
+        past_transcript: Optional[List[StoredMessage]],
     ) -> StreamingConversation:
         transcriber = self.transcriber_thunk(start_message.input_audio_config)
         synthesizer = self.synthesizer_thunk(start_message.output_audio_config)
@@ -122,6 +125,7 @@ class ConversationRouter(BaseRouter):
             if start_message.subscribe_transcript
             else None,
             logger=self.logger,
+            past_transcript=past_transcript,
         )
 
     async def start_periodic_update(self):
@@ -202,7 +206,6 @@ class ConversationRouter(BaseRouter):
         conversation = await fetch_conversation_by_uuid(
             start_message.conversation_id, self.user_id
         )
-        start_message
 
         self.conversation_id = conversation.get("id")
 
@@ -240,13 +243,17 @@ class ConversationRouter(BaseRouter):
             start_message.output_audio_config.audio_encoding,
         )
 
+        promptPreamble = conversation.get("promptPreamble")
+        past_transcript = conversation.get("pastTranscripts")
+
         self.logger.debug(f"Conversation started")
+
         conversation = self.get_conversation(
             output_device,
             start_message,
-            conversation.get("promptPreamble"),
+            promptPreamble,
             conversation.get("initialMessage"),
-            start_message.continue_conversation,
+            past_transcript=past_transcript,
         )
         await self.start_conversation(conversation, websocket, output_device)
 
@@ -308,6 +315,8 @@ async def create_message_and_count_characters(event: Event):
         sender_type = "USER"
     elif event.sender == Sender.BOT:
         sender_type = "CLONE"
+    else:
+        return
     print(
         {
             "text": event.text,
