@@ -198,10 +198,21 @@ class ConversationRouter(BaseRouter):
             await websocket.close()
             return
 
-        user_uuid = get_user_uuid_from_token(start_message.auth_token)
-        user_id = await fetch_user_id_by_uuid(user_uuid)
-        self.user_id = user_id
-        self.user_uuid = user_uuid
+        # Assuming start_message is an object that contains auth_token
+        auth_token = start_message.auth_token
+
+        print(start_message.auth_token)
+
+        if auth_token.startswith("Bearer guest-user-id-"):
+            self.user_uuid, self.user_id = await fetch_user_by_guest_id(
+                auth_token.replace("Bearer ", "")
+            )
+        else:
+            # Original logic
+            user_uuid = get_user_uuid_from_token(auth_token)
+            user_id = await fetch_user_id_by_uuid(user_uuid)
+            self.user_id = user_id
+            self.user_uuid = user_uuid
 
         conversation = await fetch_conversation_by_uuid(
             start_message.conversation_id, self.user_id
@@ -209,12 +220,22 @@ class ConversationRouter(BaseRouter):
 
         self.conversation_id = conversation.get("id")
 
-        if not user_uuid:
+        if not self.user_uuid:
             self.logger.error("Invalid or expired auth token.")
             await websocket.close()
             return
 
-        user_data = self.users_data.get(user_uuid)
+        user_data = self.users_data.get(self.user_uuid)
+
+        if not user_data:
+            try:
+                newUsersData = await fetch_users_data()
+                if newUsersData:
+                    self.users_data = newUsersData
+                user_data = self.users_data.get(self.user_uuid)
+            except Exception as e:
+                print(f"Error occurred while fetching user data: {e}")
+                # You can log the error or handle it as needed
 
         if not conversation.get("promptPreamble") or not conversation.get(
             "initialMessage"
@@ -407,3 +428,19 @@ def get_user_uuid_from_token(token: str) -> str:
     except jwt.InvalidTokenError:
         print("Invalid Token. Please check.")
     return None
+
+
+async def fetch_user_by_guest_id(guest_id: str) -> str:
+    headers = {"Authorization": f"Bearer {CATALYST_API_SECRET}"}
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(
+                f"{CATALYST_API_SERVER_URL}/users/get-user-by-guest-id",
+                headers=headers,
+                json={"guestId": guest_id},
+            )
+            response.raise_for_status()
+            return response.json().get("uuid"), response.json().get("id")
+        except httpx.RequestError as e:
+            print(f"Error fetching user ID: {e}")
+            return None
