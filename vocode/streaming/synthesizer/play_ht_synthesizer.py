@@ -9,7 +9,11 @@ from aiohttp import ClientSession, ClientTimeout
 from vocode import getenv
 from vocode.streaming.agent.bot_sentiment_analyser import BotSentiment
 from vocode.streaming.models.message import BaseMessage
-from vocode.streaming.models.synthesizer import PlayHtSynthesizerConfig, SynthesizerType
+from vocode.streaming.models.synthesizer import (
+    PlayHtSynthesizerConfig,
+    SynthesizerType,
+    OpenAISynthesizerConfig,
+)
 from vocode.streaming.synthesizer.base_synthesizer import (
     BaseSynthesizer,
     SynthesisResult,
@@ -17,7 +21,11 @@ from vocode.streaming.synthesizer.base_synthesizer import (
 )
 from vocode.streaming.utils.mp3_helper import decode_mp3
 
-from vocode.streaming.synthesizer.eleven_labs_synthesizer import ElevenLabsSynthesizer
+from vocode.streaming.synthesizer.eleven_labs_synthesizer import (
+    ElevenLabsSynthesizer,
+)
+from vocode.streaming.synthesizer.openai_synthesizer import OpenAISynthesizer
+
 from vocode.streaming.models.synthesizer import ElevenLabsSynthesizerConfig
 
 TTS_ENDPOINT = "https://play.ht/api/v2/tts/stream"
@@ -52,7 +60,11 @@ class PlayHtSynthesizer(BaseSynthesizer[PlayHtSynthesizerConfig]):
         self.synthesizer_config = synthesizer_config
         self.api_key = synthesizer_config.api_key or getenv("PLAY_HT_API_KEY")
         self.user_id = synthesizer_config.user_id or getenv("PLAY_HT_USER_ID")
-        self.backup_eleven_labs_synthesizer_api_key = getenv("ELEVEN_LABS_API_KEY")
+        self.backup_eleven_labs_synthesizer_api_key = (
+            getenv("ELEVEN_LABS_API_KEY")       
+        )
+        self.openai_api_key = getenv("OPENAI_API_KEY")
+
         if not self.api_key or not self.user_id:
             raise ValueError(
                 "You must set the PLAY_HT_API_KEY and PLAY_HT_USER_ID environment variables"
@@ -66,7 +78,32 @@ class PlayHtSynthesizer(BaseSynthesizer[PlayHtSynthesizerConfig]):
         chunk_size: int,
         bot_sentiment: Optional[BotSentiment] = None,
     ) -> SynthesisResult:
+        # self.logger.info("Attempting with OpenAI Synthesizer")
+
+        openai_config = OpenAISynthesizerConfig(
+            api_key=self.openai_api_key,
+            synthesizer_config=self.synthesizer_config,
+            sampling_rate=self.synthesizer_config.sampling_rate,
+            audio_encoding=self.synthesizer_config.audio_encoding,
+            should_encode_as_wav=True,
+        )
+
+        openai_synthesizer = OpenAISynthesizer(
+            synthesizer_config=openai_config,
+            logger=self.logger,
+            aiohttp_session=self.aiohttp_session,
+        )
+
         self.logger.info("Attempting with Eleven Labs Synthesizer")
+
+        # try:
+        #     return await openai_synthesizer.create_speech(message, chunk_size)
+        # except Exception as e:
+        #     self.logger.error(
+        #         f"Trying PlayHT.Failed to create speech with OPEN AI: {e}"
+        #     )
+
+        print("self.backup_eleven_labs_synthesizer_api_key",self.backup_eleven_labs_synthesizer_api_key)
 
         # Configure Eleven Labs synthesizer here
         eleven_labs_config = ElevenLabsSynthesizerConfig(
@@ -76,7 +113,7 @@ class PlayHtSynthesizer(BaseSynthesizer[PlayHtSynthesizerConfig]):
             synthesizer_config=self.synthesizer_config,
             sampling_rate=self.synthesizer_config.sampling_rate,
             audio_encoding=self.synthesizer_config.audio_encoding,
-            should_encode_as_wav=True
+            should_encode_as_wav=True,
             # ... Other configuration parameters ...
         )
 

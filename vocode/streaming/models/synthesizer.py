@@ -26,6 +26,7 @@ class SynthesizerType(str, Enum):
     COQUI = "synthesizer_coqui"
     BARK = "synthesizer_bark"
     POLLY = "synthesizer_polly"
+    OPENAI = "synthesizer_openai"
 
 
 class SentimentConfig(BaseModel):
@@ -96,6 +97,23 @@ class GoogleSynthesizerConfig(SynthesizerConfig, type=SynthesizerType.GOOGLE.val
     voice_name: str = DEFAULT_GOOGLE_VOICE_NAME
     pitch: float = DEFAULT_GOOGLE_PITCH
     speaking_rate: float = DEFAULT_GOOGLE_SPEAKING_RATE
+
+
+class VoiceType(str, Enum):
+    ALLOY = "alloy"
+    ECHO = "echo"
+    FABLE = "fable"
+    ONYX = "onyx"
+    NOVA = "nova"
+    SHIMMER = "shimmer"
+
+
+class OpenAISynthesizerConfig(
+    SynthesizerConfig, type=SynthesizerType.ELEVEN_LABS.value
+):
+    api_key: Optional[str] = None
+    voice_id: Optional[VoiceType] = VoiceType.SHIMMER
+    model_id: Optional[str] = "tts-1"
 
 
 ELEVEN_LABS_ADAM_VOICE_ID = "pNInz6obpgDQGcFmaJgB"

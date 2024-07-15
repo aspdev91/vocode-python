@@ -89,7 +89,10 @@ class ElevenLabsSynthesizer(BaseSynthesizer[ElevenLabsSynthesizerConfig]):
             timeout=aiohttp.ClientTimeout(total=15),
         )
         if not response.ok:
-            raise Exception(f"ElevenLabs API returned {response.status} status code")
+            content = await response.content.read()
+            raise Exception(
+                f"ElevenLabs API returned {response.status} status code {content.decode('utf-8')}"
+            )
         if self.experimental_streaming:
             return SynthesisResult(
                 self.experimental_mp3_streaming_output_generator(
